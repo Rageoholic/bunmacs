@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{iter, sync::Arc};
 
 use tokio::runtime::Runtime;
 use wgpu::{
-    Adapter, Backends, Device, DeviceDescriptor, Features, Instance, InstanceDescriptor, Queue,
-    RequestAdapterOptions, Surface, SurfaceConfiguration, TextureUsages,
+    Backends, Color, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, Instance,
+    InstanceDescriptor, LoadOp, Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceError, TextureUsages,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -18,8 +19,9 @@ pub(crate) struct WgpuInfo {
 
 struct SharedWgpuContext {
     _instance: Instance,
-    _adapter: Adapter,
-    _device: Device,
+    //currently unknown if we need this?
+    //_adapter: Adapter,
+    device: Device,
     _queue: Queue,
 }
 
@@ -85,14 +87,14 @@ impl WgpuInfo {
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
         };
-        if win_size.width == 0 || win_size.height == 0 {
+        if win_size.width != 0 && win_size.height != 0 {
             surface.configure(&device, &config);
         }
 
         let inner = Arc::new(SharedWgpuContext {
             _instance: instance,
-            _adapter: adapter,
-            _device: device,
+            //_adapter: adapter,
+            device,
             _queue: queue,
         });
         (
@@ -100,22 +102,22 @@ impl WgpuInfo {
                 _shared_context: inner.clone(),
             },
             WindowContext {
-                _surface: surface,
+                surface,
                 win: initial_window,
-                _wgpu_info: inner,
-                _inner_size: win_size,
-                _surface_config: config,
+                wgpu_info: inner,
+                inner_size: win_size,
+                surface_config: config,
             },
         )
     }
 }
 
 pub(crate) struct WindowContext {
-    _surface: Surface,
+    surface: Surface,
     win: Window,
-    _wgpu_info: Arc<SharedWgpuContext>,
-    _surface_config: SurfaceConfiguration,
-    _inner_size: PhysicalSize<u32>,
+    wgpu_info: Arc<SharedWgpuContext>,
+    surface_config: SurfaceConfiguration,
+    inner_size: PhysicalSize<u32>,
 }
 
 impl WindowContext {
@@ -125,5 +127,52 @@ impl WindowContext {
 
     pub fn set_visible(&self, b: bool) {
         self.win.set_visible(b)
+    }
+
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        self.surface_config.width = new_size.width;
+        self.surface_config.height = new_size.height;
+        self.inner_size = new_size;
+
+        if new_size.width != 0 && new_size.height != 0 {
+            self.surface
+                .configure(&self.wgpu_info.device, &self.surface_config);
+        }
+    }
+
+    pub fn redraw(&self) -> Result<(), SurfaceError> {
+        if self.inner_size.width != 0 && self.inner_size.height != 0 {
+            let output = self.surface.get_current_texture()?;
+            let view = output.texture.create_view(&Default::default());
+            let mut encoder =
+                self.wgpu_info
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor {
+                        label: Some("Render Encoder"),
+                    });
+            let render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1f64,
+                        }),
+                        store: true,
+                    },
+                })],
+                depth_stencil_attachment: None,
+            });
+
+            drop(render_pass);
+
+            self.wgpu_info._queue.submit(iter::once(encoder.finish()));
+            output.present();
+        }
+        Ok(())
     }
 }

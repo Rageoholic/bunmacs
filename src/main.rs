@@ -15,7 +15,6 @@ fn main() {
     let ev = EventLoopBuilder::new().build();
     let win = WindowBuilder::new()
         .with_title("Bunmacs!")
-        .with_resizable(false)
         .with_visible(false)
         .build(&ev)
         .unwrap();
@@ -24,17 +23,27 @@ fn main() {
     wins.insert(win.id(), win);
     ev.run(move |event, _target, control_flow| match event {
         Event::WindowEvent {
-            window_id: win_id,
-            event: WindowEvent::CloseRequested,
+            window_id,
+            ref event,
         } => {
-            if let Some(_) = wins.get(&win_id) {
-                {
-                    //TODO: confirm if user wants to close? Unsaved files?
-                    wins.remove(&win_id);
-                    if wins.len() == 0 {
-                        control_flow.set_exit();
+            if let Some(win) = wins.get_mut(&window_id) {
+                match event {
+                    WindowEvent::CloseRequested => {
+                        //TODO: confirm if user wants to close? Unsaved files?
+                        wins.remove(&window_id);
+                        if wins.len() == 0 {
+                            control_flow.set_exit();
+                        }
                     }
+                    WindowEvent::Resized(new_size) => win.resize(*new_size),
+                    _ => (),
                 }
+            }
+        }
+
+        Event::RedrawRequested(window_id) => {
+            if let Some(win) = wins.get_mut(&window_id) {
+                win.redraw().expect("WGPU Surface Error");
             }
         }
         Event::NewEvents(StartCause::Init) => {
