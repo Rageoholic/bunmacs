@@ -8,5 +8,6 @@ edition = "2021"
 [dependencies]
 env_logger = "0.10"
 log = "0.4"
+tokio = { version = "1.28.1", features = ["rt", "rt-multi-thread"] }
 wgpu = "0.16"
 winit = "0.28"
