@@ -1,8 +1,7 @@
 mod graphics;
 
-use std::collections::HashMap;
-
 use graphics::WgpuInfo;
+use std::collections::HashMap;
 use winit::{
     event::{Event, StartCause, WindowEvent},
     event_loop::EventLoopBuilder,

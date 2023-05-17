@@ -2,12 +2,13 @@ use std::{iter, sync::Arc};
 
 use tokio::runtime::Runtime;
 use wgpu::{
-    Backends, BlendState, Color, ColorTargetState, ColorWrites, CommandEncoderDescriptor, Device,
-    DeviceDescriptor, Features, FragmentState, Instance, InstanceDescriptor, LoadOp,
-    MultisampleState, Operations, PipelineLayoutDescriptor, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions,
-    ShaderModuleDescriptor, Surface, SurfaceConfiguration, SurfaceError, TextureUsages,
-    VertexState,
+    util::{BufferInitDescriptor, DeviceExt},
+    Backends, BlendState, Buffer, BufferUsages, Color, ColorTargetState, ColorWrites,
+    CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState, Instance,
+    InstanceDescriptor, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    RequestAdapterOptions, ShaderModuleDescriptor, Surface, SurfaceConfiguration, SurfaceError,
+    TextureUsages, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -15,11 +16,12 @@ use winit::{
 };
 
 //TODO: Genericize over backend?
-
+#[derive(Debug)]
 pub(crate) struct WgpuInfo {
     _shared_context: Arc<SharedWgpuContext>,
 }
 
+#[derive(Debug)]
 struct SharedWgpuContext {
     _instance: Instance,
     //currently unknown if we need this?
@@ -27,7 +29,40 @@ struct SharedWgpuContext {
     device: Device,
     queue: Queue,
     render_pipeline: RenderPipeline,
+    vertex_buffer: Buffer,
 }
+
+#[derive(Debug)]
+pub(crate) struct WindowContext {
+    surface: Surface,
+    win: Window,
+    wgpu_info: Arc<SharedWgpuContext>,
+    surface_config: SurfaceConfiguration,
+    inner_size: PhysicalSize<u32>,
+}
+
+// lib.rs
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 3],
+}
+
+const VERTICES: &[Vertex] = &[
+    Vertex {
+        position: [0.0, 0.5, 0.0],
+        color: [1.0, 0.0, 0.0],
+    },
+    Vertex {
+        position: [-0.5, -0.5, 0.0],
+        color: [0.0, 1.0, 0.0],
+    },
+    Vertex {
+        position: [0.5, -0.5, 0.0],
+        color: [0.0, 0.0, 1.0],
+    },
+];
 
 impl WgpuInfo {
     pub(crate) fn new(win: Window, rt: &Runtime) -> (Self, WindowContext) {
@@ -95,7 +130,7 @@ impl WgpuInfo {
             vertex: VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],
+                buffers: &[Vertex::desc()],
             },
             fragment: Some(FragmentState {
                 module: &shader,
@@ -137,9 +172,16 @@ impl WgpuInfo {
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
         };
+
         if inner_size.width != 0 && inner_size.height != 0 {
             surface.configure(&device, &surface_config);
         }
+
+        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("vertex buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: BufferUsages::VERTEX,
+        });
 
         let wgpu_info = Arc::new(SharedWgpuContext {
             _instance: instance,
@@ -147,7 +189,9 @@ impl WgpuInfo {
             device,
             queue,
             render_pipeline,
+            vertex_buffer,
         });
+
         (
             WgpuInfo {
                 _shared_context: wgpu_info.clone(),
@@ -161,14 +205,6 @@ impl WgpuInfo {
             },
         )
     }
-}
-
-pub(crate) struct WindowContext {
-    surface: Surface,
-    win: Window,
-    wgpu_info: Arc<SharedWgpuContext>,
-    surface_config: SurfaceConfiguration,
-    inner_size: PhysicalSize<u32>,
 }
 
 impl WindowContext {
@@ -203,7 +239,7 @@ impl WindowContext {
                     });
             //Do our render pass here
             {
-                let mut _render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(RenderPassColorAttachment {
                         view: &view,
@@ -220,13 +256,35 @@ impl WindowContext {
                     })],
                     depth_stencil_attachment: None,
                 });
-                _render_pass.set_pipeline(&self.wgpu_info.render_pipeline);
-                _render_pass.draw(0..3, 0..1);
+                render_pass.set_pipeline(&self.wgpu_info.render_pipeline);
+                render_pass.set_vertex_buffer(0, self.wgpu_info.vertex_buffer.slice(..));
+                render_pass.draw(0..3, 0..1);
             }
 
             self.wgpu_info.queue.submit(iter::once(encoder.finish()));
             output.present();
         }
         Ok(())
+    }
+}
+
+impl Vertex {
+    fn desc<'a>() -> VertexBufferLayout<'a> {
+        VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                VertexAttribute {
+                    format: VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32x4,
+                    offset: std::mem::size_of::<[f32; 3]>() as u64,
+                    shader_location: 1,
+                },
+            ],
+        }
     }
 }
