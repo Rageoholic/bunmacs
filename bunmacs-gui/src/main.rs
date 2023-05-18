@@ -3,6 +3,7 @@ mod graphics;
 use graphics::WgpuInfo;
 use std::collections::HashMap;
 use winit::{
+    dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::EventLoopBuilder,
     window::WindowBuilder,
@@ -16,11 +17,15 @@ fn main() {
     let event_loop = EventLoopBuilder::new().build();
 
     let window = WindowBuilder::new()
+        .with_inner_size(LogicalSize {
+            width: 1280,
+            height: 720,
+        })
         .with_title("Bunmacs!")
         .build(&event_loop)
         .unwrap();
 
-    let (_, window_context) = WgpuInfo::new(window, &runtime);
+    let (_instance, window_context) = WgpuInfo::new(window, &runtime);
 
     let mut window_contexts = HashMap::new();
 
