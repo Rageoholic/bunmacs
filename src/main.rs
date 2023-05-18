@@ -3,7 +3,7 @@ mod graphics;
 use graphics::WgpuInfo;
 use std::collections::HashMap;
 use winit::{
-    event::{Event, StartCause, WindowEvent},
+    event::{Event, WindowEvent},
     event_loop::EventLoopBuilder,
     window::WindowBuilder,
 };
@@ -11,54 +11,52 @@ use winit::{
 fn main() {
     env_logger::init();
 
-    let tokio_rt = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread().build().unwrap();
 
-    let ev = EventLoopBuilder::new().build();
+    let event_loop = EventLoopBuilder::new().build();
 
-    let win = WindowBuilder::new()
+    let window = WindowBuilder::new()
         .with_title("Bunmacs!")
-        .with_visible(false)
-        .build(&ev)
+        .build(&event_loop)
         .unwrap();
 
-    let (_wgpu_handle, win) = WgpuInfo::new(win, &tokio_rt);
+    let (_, window_context) = WgpuInfo::new(window, &runtime);
 
-    let mut wins = HashMap::new();
+    let mut window_contexts = HashMap::new();
 
-    wins.insert(win.id(), win);
+    window_contexts.insert(window_context.id(), window_context);
 
-    ev.run(move |event, _target, control_flow| match event {
+    event_loop.run(move |event, _target, control_flow| match event {
         Event::WindowEvent {
             window_id,
             ref event,
         } => {
-            if let Some(win) = wins.get_mut(&window_id) {
+            if let Some(context) = window_contexts.get_mut(&window_id) {
                 match event {
                     WindowEvent::CloseRequested => {
                         //TODO: confirm if user wants to close? Unsaved files?
-                        wins.remove(&window_id);
-                        if wins.len() == 0 {
+                        window_contexts.remove(&window_id);
+                        if window_contexts.len() == 0 {
                             control_flow.set_exit();
                         }
                     }
 
-                    WindowEvent::Resized(new_size) => win.resize(*new_size),
+                    WindowEvent::Resized(new_size) => context.resize(*new_size),
                     _ => (),
                 }
+            } else {
+                log::error!("Window context not found for window ID {:?}", window_id);
             }
         }
 
         Event::RedrawRequested(window_id) => {
-            if let Some(win) = wins.get_mut(&window_id) {
-                win.redraw().expect("WGPU Surface Error");
+            if let Some(context) = window_contexts.get_mut(&window_id) {
+                context.redraw().expect("WGPU Surface Error");
+            } else {
+                log::error!("Invalid window ID passed to redraw.");
             }
         }
 
-        Event::NewEvents(StartCause::Init) => {
-            for (_, win) in &wins {
-                win.set_visible(true);
-            }
-        }
         _ => {}
-    })
+    });
 }

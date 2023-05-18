@@ -222,10 +222,6 @@ impl WindowContext {
         self.win.id()
     }
 
-    pub fn set_visible(&self, b: bool) {
-        self.win.set_visible(b)
-    }
-
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
