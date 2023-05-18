@@ -1,14 +1,14 @@
-use std::{iter, sync::Arc};
+use std::{iter, mem::size_of_val, sync::Arc};
 
 use tokio::runtime::Runtime;
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-    Backends, BlendState, Buffer, BufferUsages, Color, ColorTargetState, ColorWrites,
-    CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState, Instance,
-    InstanceDescriptor, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, ShaderModuleDescriptor, Surface, SurfaceConfiguration, SurfaceError,
-    TextureUsages, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+    Backends, BlendState, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
+    ColorWrites, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState,
+    Instance, InstanceDescriptor, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor,
+    Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, Surface,
+    SurfaceConfiguration, SurfaceError, TextureUsages, VertexAttribute, VertexBufferLayout,
+    VertexFormat, VertexState,
 };
 use winit::{
     dpi::PhysicalSize,
@@ -30,6 +30,7 @@ struct SharedWgpuContext {
     queue: Queue,
     render_pipeline: RenderPipeline,
     vertex_buffer: Buffer,
+    staging_buffer: Buffer,
 }
 
 #[derive(Debug)]
@@ -173,19 +174,28 @@ impl WgpuInfo {
             view_formats: vec![],
         };
 
+        let vertices_size: u64 = size_of_val(VERTICES) as u64;
+
         if inner_size.width != 0 && inner_size.height != 0 {
             surface.configure(&device, &surface_config);
         }
-
-        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        let staging_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("staging buffer"),
+            size: vertices_size,
+            usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
+            mapped_at_creation: true,
+        });
+        let vertex_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("vertex buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: BufferUsages::VERTEX,
+            size: vertices_size,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let wgpu_info = Arc::new(SharedWgpuContext {
             _instance: instance,
             //_adapter: adapter,
+            staging_buffer,
             device,
             queue,
             render_pipeline,
@@ -237,6 +247,24 @@ impl WindowContext {
                     .create_command_encoder(&CommandEncoderDescriptor {
                         label: Some("Render Encoder"),
                     });
+
+            let staging_buffer = &self.wgpu_info.staging_buffer;
+            //write out to staging buffer
+            staging_buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&VERTICES[..]));
+
+            staging_buffer.unmap();
+
+            encoder.copy_buffer_to_buffer(
+                staging_buffer,
+                0,
+                &self.wgpu_info.vertex_buffer,
+                0,
+                staging_buffer.size(),
+            );
+
             //Do our render pass here
             {
                 let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -269,7 +297,11 @@ impl WindowContext {
 }
 
 impl Vertex {
+    const POSITION_OFFSET: usize = 0;
+    const COLOR_OFFSET: usize = 12;
     fn desc<'a>() -> VertexBufferLayout<'a> {
+        assert!(memoffset::offset_of!(Vertex, position) == Self::POSITION_OFFSET);
+        assert!(memoffset::offset_of!(Vertex, color) == Self::COLOR_OFFSET);
         VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
