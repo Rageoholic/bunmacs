@@ -1,6 +1,8 @@
 mod graphics;
 
+use font_kit::{family_name::FamilyName, properties::Properties, source::SystemSource};
 use graphics::WgpuInfo;
+
 use std::collections::HashMap;
 use winit::{
     dpi::LogicalSize,
@@ -12,7 +14,7 @@ use winit::{
 fn main() {
     env_logger::init();
 
-    let runtime = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+    let async_runtime = tokio::runtime::Builder::new_multi_thread().build().unwrap();
 
     let event_loop = EventLoopBuilder::new().build();
 
@@ -24,8 +26,13 @@ fn main() {
         .with_title("Bunmacs!")
         .build(&event_loop)
         .unwrap();
+    let font = SystemSource::new()
+        .select_best_match(&[FamilyName::Monospace], &Properties::new())
+        .unwrap()
+        .load()
+        .unwrap();
 
-    let (_instance, window_context) = WgpuInfo::new(window, &runtime);
+    let (_, window_context) = WgpuInfo::new(window, &async_runtime, &font);
 
     let mut window_contexts = HashMap::new();
 

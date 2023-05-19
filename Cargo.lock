@@ -204,9 +204,10 @@ dependencies = [
  "font-kit",
  "log",
  "memoffset 0.8.0",
+ "qcell",
  "tokio",
  "wgpu",
- "wgpu_text",
+ "wgpu_glyph",
  "winit",
 ]
 
@@ -1329,6 +1330,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "332cd62e95873ea4f41f3dfd6bbbfc5b52aec892d7e8d534197c4720a0bbbab2"
 
 [[package]]
+name = "qcell"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76babcf954d92eee717a7c9bfc4921d91dfbf2124d9bfb6ed1b0b3d0c47361e3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2026,10 +2036,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wgpu_text"
-version = "0.7.1"
+name = "wgpu_glyph"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "996f9670c674355d68b5704c0d9c76ae35d6cbf46d66a901c7318e29b96ed225"
+checksum = "adb849776538364c4d7571aca9718e2cb5ab973bee3cf5e127b83eab7616e33f"
 dependencies = [
  "bytemuck",
  "glyph_brush",

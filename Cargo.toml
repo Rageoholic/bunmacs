@@ -3,3 +3,6 @@
 members = [
     "bunmacs-gui",
 ]
+
+
+resolver = "2"

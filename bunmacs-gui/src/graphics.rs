@@ -1,15 +1,17 @@
-use std::{iter, mem::size_of_val, sync::Arc};
+use std::{cell::RefCell, fmt::Debug, iter, mem::size_of_val, sync::Arc};
 
 use tokio::runtime::Runtime;
 use wgpu::{
-    Backends, BlendState, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState,
-    ColorWrites, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState,
-    Instance, InstanceDescriptor, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor,
-    Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, Surface,
-    SurfaceConfiguration, SurfaceError, TextureUsages, VertexAttribute, VertexBufferLayout,
-    VertexFormat, VertexState,
+    util::StagingBelt, Backends, BlendState, Buffer, BufferDescriptor, BufferUsages, Color,
+    ColorTargetState, ColorWrites, CommandEncoderDescriptor, Device, DeviceDescriptor, Features,
+    FragmentState, Instance, InstanceDescriptor, LoadOp, MultisampleState, Operations,
+    PipelineLayoutDescriptor, Queue, RenderPassColorAttachment, RenderPassDescriptor,
+    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor,
+    Surface, SurfaceConfiguration, SurfaceError, TextureUsages, VertexAttribute,
+    VertexBufferLayout, VertexFormat, VertexState,
 };
+use wgpu_glyph::{ab_glyph::FontArc, GlyphBrush, GlyphBrushBuilder, Section, Text};
+
 use winit::{
     dpi::PhysicalSize,
     window::{Window, WindowId},
@@ -21,7 +23,6 @@ pub(crate) struct WgpuInfo {
     _shared_context: Arc<SharedWgpuContext>,
 }
 
-#[derive(Debug)]
 struct SharedWgpuContext {
     _instance: Instance,
     //currently unknown if we need this?
@@ -31,6 +32,22 @@ struct SharedWgpuContext {
     render_pipeline: RenderPipeline,
     vertex_buffer: Buffer,
     staging_buffer: Buffer,
+    glyph_brush: RefCell<GlyphBrush<()>>,
+    staging_belt: RefCell<StagingBelt>,
+}
+
+impl Debug for SharedWgpuContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedWgpuContext")
+            .field("_instance", &self._instance)
+            .field("device", &self.device)
+            .field("queue", &self.queue)
+            .field("render_pipeline", &self.render_pipeline)
+            .field("vertex_buffer", &self.vertex_buffer)
+            .field("staging_buffer", &self.staging_buffer)
+            .field("glyph_brush", &self.glyph_brush.borrow())
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -66,7 +83,11 @@ const VERTICES: &[Vertex] = &[
 ];
 
 impl WgpuInfo {
-    pub(crate) fn new(win: Window, rt: &Runtime) -> (Self, WindowContext) {
+    pub(crate) fn new(
+        win: Window,
+        rt: &Runtime,
+        font: &font_kit::font::Font,
+    ) -> (Self, WindowContext) {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::all(),
             dx12_shader_compiler: Default::default(),
@@ -191,6 +212,13 @@ impl WgpuInfo {
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let font_bytes = font.copy_font_data().unwrap();
+
+        let glyph_font = FontArc::try_from_vec((*font_bytes).clone()).unwrap();
+        let glyph_brush =
+            GlyphBrushBuilder::using_font(glyph_font).build(&device, surface_config.format);
+
+        let staging_belt = StagingBelt::new(64);
 
         let wgpu_info = Arc::new(SharedWgpuContext {
             _instance: instance,
@@ -200,6 +228,8 @@ impl WgpuInfo {
             queue,
             render_pipeline,
             vertex_buffer,
+            staging_belt: RefCell::new(staging_belt),
+            glyph_brush: RefCell::new(glyph_brush),
         });
 
         (
@@ -233,7 +263,7 @@ impl WindowContext {
         }
     }
 
-    pub fn redraw(&self) -> Result<(), SurfaceError> {
+    pub fn redraw(&mut self) -> Result<(), SurfaceError> {
         if self.inner_size.width != 0 && self.inner_size.height != 0 {
             let output = self.surface.get_current_texture()?;
             let view = output.texture.create_view(&Default::default());
@@ -243,6 +273,8 @@ impl WindowContext {
                     .create_command_encoder(&CommandEncoderDescriptor {
                         label: Some("Render Encoder"),
                     });
+
+            let mut staging_belt = self.wgpu_info.staging_belt.borrow_mut();
 
             let staging_buffer = &self.wgpu_info.staging_buffer;
             //write out to staging buffer
@@ -260,6 +292,8 @@ impl WindowContext {
                 0,
                 staging_buffer.size(),
             );
+            //Temporary font stuff
+            {}
 
             //Do our render pass here
             {
@@ -285,6 +319,44 @@ impl WindowContext {
                 render_pass.draw(0..3, 0..1);
             }
 
+            {
+                let glyph_brush = &mut self.wgpu_info.glyph_brush.borrow_mut();
+                glyph_brush.queue(Section {
+                    screen_position: (50.0, 90.0),
+                    bounds: (
+                        self.surface_config.width as f32,
+                        self.surface_config.height as f32,
+                    ),
+                    text: vec![Text::new("Hello world")
+                        .with_color([1.0, 1.0, 1.0, 1.0])
+                        .with_scale(40.0)],
+                    ..Default::default()
+                });
+
+                glyph_brush.queue(Section {
+                    screen_position: (180.0, 360.0),
+                    bounds: (
+                        self.surface_config.width as f32,
+                        self.surface_config.height as f32,
+                    ),
+                    text: vec![Text::new("Hello world")
+                        .with_color([1.0, 0.0, 0.0, 1.0])
+                        .with_scale(13.0)],
+                    ..Default::default()
+                });
+
+                glyph_brush
+                    .draw_queued(
+                        &self.wgpu_info.device,
+                        &mut staging_belt,
+                        &mut encoder,
+                        &view,
+                        self.surface_config.width,
+                        self.surface_config.height,
+                    )
+                    .unwrap();
+            }
+            staging_belt.finish();
             self.wgpu_info.queue.submit(iter::once(encoder.finish()));
             output.present();
         }
