@@ -1,16 +1,20 @@
 mod graphics;
 
 use font_kit::{family_name::FamilyName, properties::Properties, source::SystemSource};
-use graphics::WgpuInfo;
+use graphics::{WgpuInfo, WindowContext};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
-    event_loop::EventLoopBuilder,
+    event_loop::{ControlFlow, EventLoopBuilder},
     window::WindowBuilder,
 };
 
+enum Win {
+    WindowContext(WindowContext),
+    Tombstone,
+}
 fn main() {
     env_logger::init();
 
@@ -34,26 +38,37 @@ fn main() {
 
     let (_, window_context) = WgpuInfo::new(window, &async_runtime, &font);
 
+    let mut window_set = HashSet::new();
+    window_set.insert(window_context.id());
+
     let mut window_contexts = HashMap::new();
 
-    window_contexts.insert(window_context.id(), window_context);
+    window_contexts.insert(window_context.id(), Win::WindowContext(window_context));
 
     event_loop.run(move |event, _target, control_flow| match event {
         Event::WindowEvent {
             window_id,
             ref event,
         } => {
-            if let Some(context) = window_contexts.get_mut(&window_id) {
+            if let Some(win) = window_contexts.get_mut(&window_id) {
                 match event {
                     WindowEvent::CloseRequested => {
                         //TODO: confirm if user wants to close? Unsaved files?
-                        window_contexts.remove(&window_id);
-                        if window_contexts.len() == 0 {
-                            control_flow.set_exit();
-                        }
+
+                        *win = Win::Tombstone;
                     }
 
-                    WindowEvent::Resized(new_size) => context.resize(*new_size),
+                    WindowEvent::Resized(new_size) => {
+                        if let Win::WindowContext(context) = win {
+                            context.resize(*new_size)
+                        }
+                    }
+                    WindowEvent::Destroyed => {
+                        window_contexts.remove(&window_id);
+                        if window_contexts.len() == 0 {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                    }
                     _ => (),
                 }
             } else {
@@ -62,7 +77,7 @@ fn main() {
         }
 
         Event::RedrawRequested(window_id) => {
-            if let Some(context) = window_contexts.get_mut(&window_id) {
+            if let Some(Win::WindowContext(context)) = window_contexts.get_mut(&window_id) {
                 context.redraw().expect("WGPU Surface Error");
             } else {
                 log::error!("Invalid window ID passed to redraw.");

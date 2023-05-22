@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt::Debug, iter, mem::size_of_val, sync::Arc};
+use std::{cell::RefCell, fmt::Debug, iter, mem::size_of_val, num::NonZeroU64, sync::Arc};
 
 use tokio::runtime::Runtime;
 use wgpu::{
@@ -31,7 +31,6 @@ struct SharedWgpuContext {
     queue: Queue,
     render_pipeline: RenderPipeline,
     vertex_buffer: Buffer,
-    staging_buffer: Buffer,
     glyph_brush: RefCell<GlyphBrush<()>>,
     staging_belt: RefCell<StagingBelt>,
 }
@@ -44,7 +43,6 @@ impl Debug for SharedWgpuContext {
             .field("queue", &self.queue)
             .field("render_pipeline", &self.render_pipeline)
             .field("vertex_buffer", &self.vertex_buffer)
-            .field("staging_buffer", &self.staging_buffer)
             .field("glyph_brush", &self.glyph_brush.borrow())
             .finish()
     }
@@ -53,9 +51,9 @@ impl Debug for SharedWgpuContext {
 #[derive(Debug)]
 pub(crate) struct WindowContext {
     surface: Surface,
-    win: Window,
     wgpu_info: Arc<SharedWgpuContext>,
     surface_config: SurfaceConfiguration,
+    win: Window,
     inner_size: PhysicalSize<u32>,
 }
 
@@ -200,12 +198,7 @@ impl WgpuInfo {
         if inner_size.width != 0 && inner_size.height != 0 {
             surface.configure(&device, &surface_config);
         }
-        let staging_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("staging buffer"),
-            size: vertices_size,
-            usage: BufferUsages::COPY_SRC | BufferUsages::MAP_WRITE,
-            mapped_at_creation: true,
-        });
+
         let vertex_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("vertex buffer"),
             size: vertices_size,
@@ -223,7 +216,6 @@ impl WgpuInfo {
         let wgpu_info = Arc::new(SharedWgpuContext {
             _instance: instance,
             //_adapter: adapter,
-            staging_buffer,
             device,
             queue,
             render_pipeline,
@@ -276,24 +268,15 @@ impl WindowContext {
 
             let mut staging_belt = self.wgpu_info.staging_belt.borrow_mut();
 
-            let staging_buffer = &self.wgpu_info.staging_buffer;
-            //write out to staging buffer
-            staging_buffer
-                .slice(..)
-                .get_mapped_range_mut()
+            staging_belt
+                .write_buffer(
+                    &mut encoder,
+                    &self.wgpu_info.vertex_buffer,
+                    0,
+                    NonZeroU64::new(size_of_val(VERTICES) as u64).unwrap(),
+                    &self.wgpu_info.device,
+                )
                 .copy_from_slice(bytemuck::cast_slice(&VERTICES[..]));
-
-            staging_buffer.unmap();
-
-            encoder.copy_buffer_to_buffer(
-                staging_buffer,
-                0,
-                &self.wgpu_info.vertex_buffer,
-                0,
-                staging_buffer.size(),
-            );
-            //Temporary font stuff
-            {}
 
             //Do our render pass here
             {
