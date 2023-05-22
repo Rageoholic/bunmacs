@@ -1,3 +1,256 @@
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt::Debug,
+    hash::{BuildHasher, BuildHasherDefault},
+    io,
+    num::NonZeroUsize,
+};
+
+use string_interner::{backend::Backend, symbol::SymbolUsize, DefaultBackend, StringInterner};
+
+#[derive(Debug)]
+enum Expr<B: Backend> {
+    Symbol(B::Symbol),
+    Number(i64),
+    List(Vec<Expr<B>>),
+}
+
+impl<B: Backend> Clone for Expr<B> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Symbol(arg0) => Self::Symbol(arg0.clone()),
+            Self::Number(arg0) => Self::Number(arg0.clone()),
+            Self::List(arg0) => Self::List(arg0.clone()),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Err {
+    UnmatchedCloser,
+    UnmatchedOpeners { depth: NonZeroUsize },
+}
+
+// #[derive(Debug, Clone)]
+// struct Env {
+//     data: HashMap<SymbolUsize, Expr>,
+// }
+
+#[derive(Debug)]
+struct InternTable<B: Backend, H: BuildHasher> {
+    intern_table: StringInterner<B, H>,
+    open_paren: B::Symbol,
+    close_paren: B::Symbol,
+    add_symbol: B::Symbol,
+    sub_symbol: B::Symbol,
+    mul_symbol: B::Symbol,
+    div_symbol: B::Symbol,
+}
+
+fn tokenize<B: Backend, H: BuildHasher>(
+    expr: String,
+    intern_table: &mut InternTable<B, H>,
+) -> Vec<B::Symbol> {
+    expr.replace("(", " ( ")
+        .replace(")", " ) ")
+        .split_whitespace()
+        .map(|x| intern_table.intern_table.get_or_intern(x))
+        .collect()
+}
+
+fn parse<B: Backend, H: BuildHasher>(
+    token_stream: Vec<B::Symbol>,
+    intern_table: &mut InternTable<B, H>,
+) -> Result<Vec<Expr<B>>, Vec<Err>> {
+    let mut stack = vec![];
+    let mut curr = Vec::with_capacity(token_stream.len());
+
+    let mut errs = vec![];
+
+    for symbol in token_stream {
+        if symbol == intern_table.open_paren {
+            stack.push(curr);
+            curr = vec![];
+        } else if symbol == intern_table.close_paren {
+            if let Some(mut old) = stack.pop() {
+                old.push(Expr::List(curr));
+                curr = old;
+            } else {
+                errs.push(Err::UnmatchedCloser)
+            }
+        } else {
+            let str = intern_table.intern_table.resolve(symbol).unwrap();
+            match str.parse() {
+                Ok(num) => curr.push(Expr::Number(num)),
+                Result::Err(_) => curr.push(Expr::Symbol(symbol)),
+            }
+        }
+    }
+
+    match NonZeroUsize::new(stack.len()) {
+        Some(depth) => errs.push(Err::UnmatchedOpeners { depth }),
+        None => {}
+    }
+
+    if errs.len() != 0 {
+        Err(errs)
+    } else {
+        Ok(curr)
+    }
+}
+
+fn slurp_expr() -> String {
+    let mut expr = String::new();
+
+    io::stdin()
+        .read_line(&mut expr)
+        .expect("failed to read line");
+    expr
+}
+
 fn main() {
-    println!("Hello, world!");
+    let mut interner: StringInterner<
+        DefaultBackend<SymbolUsize>,
+        BuildHasherDefault<DefaultHasher>,
+    > = StringInterner::new();
+
+    let mut intern_table = InternTable {
+        open_paren: interner.get_or_intern("("),
+        close_paren: interner.get_or_intern(")"),
+        add_symbol: interner.get_or_intern("+"),
+        sub_symbol: interner.get_or_intern("-"),
+        mul_symbol: interner.get_or_intern("*"),
+        div_symbol: interner.get_or_intern("/"),
+        intern_table: interner,
+    };
+    loop {
+        println!("risp >");
+        let expr = slurp_expr();
+        let tokens = tokenize(expr, &mut intern_table);
+
+        match parse(tokens, &mut intern_table) {
+            Ok(exprs) => {
+                for expr in exprs {
+                    match eval(&expr, &mut intern_table) {
+                        Ok(Expr::Number(n)) => println!("{}", n),
+                        Ok(Expr::List(l)) => println!("{:?}", l),
+                        Ok(Expr::Symbol(s)) => {
+                            println!("#:{}", intern_table.intern_table.resolve(s).unwrap())
+                        }
+                        Result::Err(err) => println!("ERROR: {err}"),
+                    }
+                }
+            }
+            Result::Err(errs) => {
+                for err in errs {
+                    match err {
+                        Err::UnmatchedCloser => println!("Unmatched closing delimiter"),
+                        Err::UnmatchedOpeners { depth } => {
+                            println!("{} unmatched opening delimiter", depth)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn eval<B: Backend, H: BuildHasher>(
+    expr: &Expr<B>,
+    intern_table: &mut InternTable<B, H>,
+) -> Result<Expr<B>, String>
+where
+    B::Symbol: Clone,
+{
+    match expr {
+        Expr::Symbol(_) => Ok(expr.clone()),
+        Expr::Number(_) => Ok(expr.clone()),
+        Expr::List(list) => call_fn(list, intern_table),
+    }
+}
+
+fn call_fn<B: Backend, H: BuildHasher>(
+    list: &Vec<Expr<B>>,
+    intern_table: &mut InternTable<B, H>,
+) -> Result<Expr<B>, String> {
+    let mut iter = list.iter();
+    if let Some(Expr::Symbol(expr)) = iter.next() {
+        if *expr == intern_table.add_symbol {
+            let mut sum = 0;
+            for elem in iter {
+                if let Expr::Number(num) = elem {
+                    sum += num;
+                } else if let Expr::List(_) = elem {
+                    if let Expr::Number(num) = eval(elem, intern_table)? {
+                        sum += num;
+                    } else {
+                        return Err("Non number elem in math call".to_string());
+                    }
+                } else {
+                    return Err("Non number elem in math function".to_string());
+                }
+            }
+            Ok(Expr::Number(sum))
+        } else if *expr == intern_table.sub_symbol {
+            match iter.len() {
+                1 => {
+                    if let Some(Expr::Number(n)) = iter.next() {
+                        Ok(Expr::Number(-n))
+                    } else {
+                        Err("Cannot negate a non-number".to_owned())
+                    }
+                }
+                _ => {
+                    if let Some(Expr::Number(mut res)) = iter.next() {
+                        for elem in iter {
+                            if let Expr::Number(n) = elem {
+                                res -= n;
+                            } else {
+                                Err("Non number elem in math call")?
+                            }
+                        }
+                        Ok(Expr::Number(res))
+                    } else {
+                        Err("Non number elem in math call".to_owned())
+                    }
+                }
+            }
+        } else if *expr == intern_table.div_symbol {
+            if let Some(Expr::Number(mut res)) = iter.next() {
+                for elem in iter {
+                    if let Expr::Number(n) = elem {
+                        if *n == 0 {
+                            return Err("Divide by zero!".to_owned());
+                        } else {
+                            res /= n;
+                        }
+                    } else {
+                        return Err("Non number in math function".to_owned());
+                    }
+                }
+                Ok(Expr::Number(res))
+            } else {
+                return Err("Called div on empty list".to_owned());
+            }
+        } else if *expr == intern_table.mul_symbol {
+            if let Some(Expr::Number(mut res)) = iter.next() {
+                for elem in iter {
+                    if let Expr::Number(n) = elem {
+                        res *= n;
+                    } else {
+                        return Err("Non number in math function".to_owned());
+                    }
+                }
+                Ok(Expr::Number(res))
+            } else {
+                return Err("Called mul on empty list".to_owned());
+            }
+        } else {
+            return Err("Unknown op".into());
+        }
+    } else if list.len() > 0 {
+        Err("Nonsymbol in head positon: Cannot call".to_owned())
+    } else {
+        Err("calling empty list".to_owned())
+    }
 }
