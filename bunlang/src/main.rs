@@ -9,6 +9,7 @@ use std::{
 use string_interner::{backend::Backend, symbol::SymbolUsize, DefaultBackend, StringInterner};
 
 #[derive(Debug)]
+#[non_exhaustive]
 enum Expr<B: Backend> {
     Symbol(B::Symbol),
     Number(i64),
@@ -163,9 +164,8 @@ where
     B::Symbol: Clone,
 {
     match expr {
-        Expr::Symbol(_) => Ok(expr.clone()),
-        Expr::Number(_) => Ok(expr.clone()),
         Expr::List(list) => call_fn(list, intern_table),
+        _ => Ok(expr.clone()),
     }
 }
 
