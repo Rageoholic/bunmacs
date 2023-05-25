@@ -173,15 +173,20 @@ fn call_fn<B: Backend, H: BuildHasher>(
     list: &Vec<Expr<B>>,
     intern_table: &mut InternTable<B, H>,
 ) -> Result<Expr<B>, String> {
-    let mut iter = list.iter();
-    if let Some(Expr::Symbol(expr)) = iter.next() {
-        if *expr == intern_table.add_symbol {
+    let mut iter = list
+        .iter()
+        .map(|e| eval(e, intern_table))
+        .collect::<Vec<_>>()
+        .into_iter();
+    if let Expr::Symbol(sym) = iter.next().unwrap_or(Err("called empty list".to_owned()))? {
+        if sym == intern_table.add_symbol {
             let mut sum = 0;
             for elem in iter {
+                let elem = elem?;
                 if let Expr::Number(num) = elem {
                     sum += num;
                 } else if let Expr::List(_) = elem {
-                    if let Expr::Number(num) = eval(elem, intern_table)? {
+                    if let Expr::Number(num) = eval(&elem, intern_table)? {
                         sum += num;
                     } else {
                         return Err("Non number elem in math call".to_string());
@@ -191,19 +196,25 @@ fn call_fn<B: Backend, H: BuildHasher>(
                 }
             }
             Ok(Expr::Number(sum))
-        } else if *expr == intern_table.sub_symbol {
+        } else if sym == intern_table.sub_symbol {
             match iter.len() {
                 1 => {
-                    if let Some(Expr::Number(n)) = iter.next() {
+                    let elem = iter
+                        .next()
+                        .expect("iter.len is incoherent with actual length?");
+                    if let Expr::Number(n) = elem? {
                         Ok(Expr::Number(-n))
                     } else {
                         Err("Cannot negate a non-number".to_owned())
                     }
                 }
                 _ => {
-                    if let Some(Expr::Number(mut res)) = iter.next() {
+                    let elem = iter
+                        .next()
+                        .expect("iter.len is incoherent with actual length?");
+                    if let Expr::Number(mut res) = elem? {
                         for elem in iter {
-                            if let Expr::Number(n) = elem {
+                            if let Expr::Number(n) = elem? {
                                 res -= n;
                             } else {
                                 Err("Non number elem in math call")?
@@ -215,11 +226,14 @@ fn call_fn<B: Backend, H: BuildHasher>(
                     }
                 }
             }
-        } else if *expr == intern_table.div_symbol {
-            if let Some(Expr::Number(mut res)) = iter.next() {
+        } else if sym == intern_table.div_symbol {
+            let elem = iter
+                .next()
+                .unwrap_or(Err("Called div on an empty list".to_owned()));
+            if let Expr::Number(mut res) = elem? {
                 for elem in iter {
-                    if let Expr::Number(n) = elem {
-                        if *n == 0 {
+                    if let Expr::Number(n) = elem? {
+                        if n == 0 {
                             return Err("Divide by zero!".to_owned());
                         } else {
                             res /= n;
@@ -230,21 +244,19 @@ fn call_fn<B: Backend, H: BuildHasher>(
                 }
                 Ok(Expr::Number(res))
             } else {
-                return Err("Called div on empty list".to_owned());
+                return Err("Non number in math function".to_owned());
             }
-        } else if *expr == intern_table.mul_symbol {
-            if let Some(Expr::Number(mut res)) = iter.next() {
-                for elem in iter {
-                    if let Expr::Number(n) = elem {
-                        res *= n;
-                    } else {
-                        return Err("Non number in math function".to_owned());
-                    }
+        } else if sym == intern_table.mul_symbol {
+            let mut res = 1;
+
+            for elem in iter {
+                if let Expr::Number(n) = elem? {
+                    res *= n;
+                } else {
+                    return Err("Non number in math function".to_owned());
                 }
-                Ok(Expr::Number(res))
-            } else {
-                return Err("Called mul on empty list".to_owned());
             }
+            Ok(Expr::Number(res))
         } else {
             return Err("Unknown op".into());
         }
