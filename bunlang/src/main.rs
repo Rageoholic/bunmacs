@@ -14,6 +14,7 @@ enum Expr<B: Backend> {
     Symbol(B::Symbol),
     Number(i64),
     List(Vec<Expr<B>>),
+    Bool(bool),
 }
 
 impl<B: Backend> Clone for Expr<B> {
@@ -22,6 +23,7 @@ impl<B: Backend> Clone for Expr<B> {
             Self::Symbol(arg0) => Self::Symbol(arg0.clone()),
             Self::Number(arg0) => Self::Number(arg0.clone()),
             Self::List(arg0) => Self::List(arg0.clone()),
+            Self::Bool(b) => Self::Bool(*b),
         }
     }
 }
@@ -46,6 +48,8 @@ struct InternTable<B: Backend, H: BuildHasher> {
     sub_symbol: B::Symbol,
     mul_symbol: B::Symbol,
     div_symbol: B::Symbol,
+    true_symbol: B::Symbol,
+    false_symbol: B::Symbol,
 }
 
 fn tokenize<B: Backend, H: BuildHasher>(
@@ -79,6 +83,10 @@ fn parse<B: Backend, H: BuildHasher>(
             } else {
                 errs.push(Err::UnmatchedCloser)
             }
+        } else if symbol == intern_table.true_symbol {
+            curr.push(Expr::Bool(true))
+        } else if symbol == intern_table.false_symbol {
+            curr.push(Expr::Bool(false))
         } else {
             let str = intern_table.intern_table.resolve(symbol).unwrap();
             match str.parse() {
@@ -122,6 +130,8 @@ fn main() {
         sub_symbol: interner.get_or_intern("-"),
         mul_symbol: interner.get_or_intern("*"),
         div_symbol: interner.get_or_intern("/"),
+        true_symbol: interner.get_or_intern("#t"),
+        false_symbol: interner.get_or_intern("#f"),
         intern_table: interner,
     };
     loop {
@@ -138,6 +148,7 @@ fn main() {
                         Ok(Expr::Symbol(s)) => {
                             println!("#:{}", intern_table.intern_table.resolve(s).unwrap())
                         }
+                        Ok(Expr::Bool(b)) => println!("{}", b),
                         Result::Err(err) => println!("ERROR: {err}"),
                     }
                 }
