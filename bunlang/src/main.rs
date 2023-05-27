@@ -50,6 +50,7 @@ struct InternTable<B: Backend, H: BuildHasher> {
     div_symbol: B::Symbol,
     true_symbol: B::Symbol,
     false_symbol: B::Symbol,
+    if_symbol: B::Symbol,
 }
 
 fn tokenize<B: Backend, H: BuildHasher>(
@@ -132,6 +133,7 @@ fn main() {
         div_symbol: interner.get_or_intern("/"),
         true_symbol: interner.get_or_intern("#t"),
         false_symbol: interner.get_or_intern("#f"),
+        if_symbol: interner.get_or_intern("if"),
         intern_table: interner,
     };
     loop {
@@ -268,8 +270,21 @@ fn call_fn<B: Backend, H: BuildHasher>(
                 }
             }
             Ok(Expr::Number(res))
+        } else if sym == intern_table.if_symbol {
+            if iter.len() == 3 {
+                let expr_0 = iter.next().expect("incorrect iter.len");
+                let expr_1 = iter.next().expect("incorrect iter.len")?;
+                let expr_2 = iter.next().expect("incorrect iter.len")?;
+                if let Expr::Bool(b) = expr_0? {
+                    eval(if b { &expr_1 } else { &expr_2 }, intern_table)
+                } else {
+                    Err("Non boolean condition to if statement".to_owned())
+                }
+            } else {
+                Err(format!("Expected 3 args found {} args", iter.len()).to_string())
+            }
         } else {
-            return Err("Unknown op".into());
+            Err("Unknown op".into())
         }
     } else if list.len() > 0 {
         Err("Nonsymbol in head positon: Cannot call".to_owned())
